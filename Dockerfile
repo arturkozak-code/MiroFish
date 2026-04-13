@@ -38,6 +38,9 @@ RUN cd backend && uv sync --no-dev
 # 复制后端源码
 COPY backend/ ./backend/
 
+# 复制 locales 目录（后端 app/utils/locale.py 在导入时会加载 ../../../locales/languages.json）
+COPY locales/ ./locales/
+
 # 从 frontend-builder 拷贝构建好的前端静态资源
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
