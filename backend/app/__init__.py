@@ -9,16 +9,34 @@ import warnings
 # 需要在所有其他导入之前设置
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 from flask_cors import CORS
 
 from .config import Config
 from .utils.logger import setup_logger, get_logger
 
 
+def _resolve_static_dir():
+    """解析前端静态资源目录（构建后的 frontend/dist）"""
+    # 允许通过环境变量覆盖（Docker/Railway 场景）
+    env_dir = os.environ.get('FRONTEND_DIST_DIR')
+    if env_dir and os.path.isdir(env_dir):
+        return env_dir
+    # 默认：相对于 backend/app/__init__.py -> ../../frontend/dist
+    default_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', '..', 'frontend', 'dist')
+    )
+    return default_dir
+
+
 def create_app(config_class=Config):
     """Flask应用工厂函数"""
-    app = Flask(__name__)
+    static_dir = _resolve_static_dir()
+    app = Flask(
+        __name__,
+        static_folder=static_dir,
+        static_url_path='',
+    )
     app.config.from_object(config_class)
     
     # 设置JSON编码：确保中文直接显示（而不是 \uXXXX 格式）
@@ -72,9 +90,31 @@ def create_app(config_class=Config):
     @app.route('/health')
     def health():
         return {'status': 'ok', 'service': 'MiroFish Backend'}
-    
+
+    # SPA 前端静态资源服务（生产环境）
+    # 在 /api/* 和 /health 之外的所有路径，返回前端构建产物。
+    # 由于蓝图路由带有 /api/ 前缀，路由匹配优先级会高于下面的 catch-all。
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_spa(path):
+        if not os.path.isdir(app.static_folder):
+            return (
+                {
+                    'error': 'frontend not built',
+                    'hint': 'run `npm --prefix frontend run build` or set FRONTEND_DIST_DIR',
+                    'static_folder': app.static_folder,
+                },
+                503,
+            )
+        # 如果请求的是真实存在的静态文件，直接返回它
+        candidate = os.path.join(app.static_folder, path)
+        if path and os.path.isfile(candidate):
+            return send_from_directory(app.static_folder, path)
+        # 否则回退到 index.html（SPA 路由由前端处理）
+        return send_from_directory(app.static_folder, 'index.html')
+
     if should_log_startup:
         logger.info("MiroFish Backend 启动完成")
-    
+
     return app
 
